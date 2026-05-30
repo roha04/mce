@@ -1,0 +1,6 @@
+-std=c++17
+-I../third_party/glad/include
+-I.
+-I../build/_deps/imgui-src
+-I../build/_deps/imgui-src/backends
+-I../build/_deps/glfw-src/include

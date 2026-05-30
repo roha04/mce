@@ -1,0 +1,8 @@
+CompileFlags:
+  Add:
+    - -std=c++17
+    - -ID:/mce/FEM_Simulator/third_party/glad/include
+    - -ID:/mce/FEM_Simulator/src
+    - -ID:/mce/FEM_Simulator/build/_deps/imgui-src
+    - -ID:/mce/FEM_Simulator/build/_deps/imgui-src/backends
+    - -ID:/mce/FEM_Simulator/build/_deps/glfw-src/include
