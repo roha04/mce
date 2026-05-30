@@ -1,0 +1,13 @@
+{
+    "terminal.integrated.env.windows": {
+        "Path": "C:\\Program Files\\CMake\\bin;${env:Path}"
+    },
+    "cmake.sourceDirectory": "D:/mce/FEM_Simulator",
+    "clangd.fallbackFlags": [
+        "-ID:/mce/FEM_Simulator/third_party/glad/include",
+        "-ID:/mce/FEM_Simulator/src",
+        "-ID:/mce/FEM_Simulator/build/_deps/imgui-src",
+        "-ID:/mce/FEM_Simulator/build/_deps/imgui-src/backends",
+        "-ID:/mce/FEM_Simulator/build/_deps/glfw-src/include"
+    ]
+}

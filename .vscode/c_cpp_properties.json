@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/FEM_Simulator/src",
+                "${workspaceFolder}/FEM_Simulator/third_party/glad/include",
+                "${workspaceFolder}/FEM_Simulator/build/_deps/imgui-src",
+                "${workspaceFolder}/FEM_Simulator/build/_deps/imgui-src/backends",
+                "${workspaceFolder}/FEM_Simulator/build/_deps/glfw-src/include"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "compilerPath": "cl.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-msvc-x64"
+        }
+    ],
+    "version": 4
+}
