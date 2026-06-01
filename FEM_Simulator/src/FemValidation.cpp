@@ -7,15 +7,19 @@
 #include <cmath>
 #include <vector>
 
+// Автотести заняття 13: коректність Якобіана та стрічкового розв'язувача.
+
 FemValidationReport runFemValidationChecks()
 {
     FemValidationReport report{};
 
+    // Тест 1: одиничний куб 4×4×4 м, det(J) у центрі (ξ=η=ζ=0) має бути ≈ 8.
     report.jacobianUnitCubeDet = verifyUnitCubeJacobianDeterminant();
     report.jacobianUnitCubeOk = std::abs(report.jacobianUnitCubeDet - 8.0) < 0.05;
 
     try
     {
+        // Тест 2: мінімальна сітка 1×1×1, зібрати K без поверхневого навантаження, накласти ZU.
         Mesh mesh;
         mesh.generateRectangularParallelepiped(1.0, 1.0, 1.0, 1, 1, 1);
         mesh.buildBoundaryData(0.0);
@@ -40,6 +44,7 @@ FemValidationReport runFemValidationChecks()
             return band[static_cast<std::size_t>(i * hb + (j - i))];
         };
 
+        // F_i = сума елементів рядка K (для симетричної K це дає K·1); очікуємо U≈1 на вільних DOF.
         std::vector<double> unitRhs(static_cast<std::size_t>(n), 0.0);
         for (int i = 0; i < n; ++i)
         {

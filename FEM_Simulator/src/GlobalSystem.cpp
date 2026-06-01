@@ -6,12 +6,15 @@
 #include <stdexcept>
 #include <vector>
 
+// GlobalSystem: збірка глобальної K у стрічці MG, вектора F, штрафні КУ, розв'язання Гаусом.
+
 namespace
 {
 std::atomic<float> g_calculationProgress{0.0f};
 
 constexpr double kCoordTolerance = 1.0e-6;
 
+// Копіює 20 вузлів елемента з глобального масиву координат за NT.
 void gatherElementNodes(const Mesh& mesh, const Element& element, Node elementNodes[kHex20NodeCount])
 {
     const std::vector<Node>& nodes = mesh.getNodes();
@@ -35,6 +38,7 @@ void setCalculationProgress(const float value)
     g_calculationProgress.store(value, std::memory_order_relaxed);
 }
 
+// Виділення MG (dofCount × halfBandwidth), F та U нулями.
 void GlobalSystem::allocate(const int dofCount, const int halfBandwidth)
 {
     dofCount_ = dofCount;
@@ -44,6 +48,7 @@ void GlobalSystem::allocate(const int dofCount, const int halfBandwidth)
     u_.assign(static_cast<std::size_t>(dofCount_), 0.0);
 }
 
+// Лінійний індекс у kBand_: рядок i, стовпець j (j≥i), лише якщо j-i < ng.
 int GlobalSystem::bandIndex(const int i, const int j) const
 {
     if (i < 0 || j < i || j - i >= halfBandwidth_)
@@ -100,6 +105,7 @@ int GlobalSystem::globalDof(const int nodeId, const int component)
     return nodeId * 3 + component;
 }
 
+// Додавання K^e та F^e до глобальних структур: DOF = 3·номер_вузла + компонента.
 void GlobalSystem::assembleElement(const Element& element,
                                    const ElementStiffnessMatrix& Ke,
                                    const ElementLoadVector& Fe)
@@ -122,6 +128,7 @@ void GlobalSystem::assembleElement(const Element& element,
     }
 }
 
+// Метод штрафу: K_ii += kPenalty, F_i = 0 → наближено U_i = 0 на закріпленому DOF.
 void GlobalSystem::applyPenaltyToDof(const int dof)
 {
     if (dof < 0 || dof >= dofCount_)
@@ -148,6 +155,8 @@ void GlobalSystem::applyFixedFaceZU(const Mesh& mesh)
     }
 }
 
+// Розв'язання K·U=F методом Гауса з урахуванням смуги: зниження лише в межах ng.
+// Не розгортаємо MG у повну матрицю N×N (вимога ТЗ).
 void GlobalSystem::solveBandedGauss()
 {
     u_ = f_;
@@ -199,6 +208,7 @@ void GlobalSystem::solveBandedGauss()
     }
 }
 
+// 1) Для кожного СЕ: K^e → MG, F^e=0. 2) Якщо includeSurfaceLoads — додати F^e з ZP (тиск).
 void GlobalSystem::assembleFromMesh(const Mesh& mesh,
                                     const MaterialProperties& material,
                                     const bool includeSurfaceLoads)
@@ -245,6 +255,7 @@ void GlobalSystem::assembleFromMesh(const Mesh& mesh,
     }
 }
 
+// Повний розрахунковий цикл для UI: збірка з навантаженням → КУ → U.
 void GlobalSystem::buildFromMesh(const Mesh& mesh,
                                  const MaterialProperties& material,
                                  const double /*tractionY*/)

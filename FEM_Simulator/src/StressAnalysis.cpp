@@ -3,8 +3,11 @@
 #include <algorithm>
 #include <cmath>
 
+// Післяпроцесор: деформації з U, напруження σ = D·ε, головні σ1..σ3 (заняття 12).
+
 namespace
 {
+// Вектор деформацій Voigt [εxx,εyy,εzz,γxy,γyz,γxz] через градієнти ψ та U_e.
 void computeStrainFromDerivatives(const double dNGlobal[kHex20NodeCount][3],
                                   const double elementDisplacements[kElementDofCount],
                                   double strain[6])
@@ -27,6 +30,7 @@ void computeStrainFromDerivatives(const double dNGlobal[kHex20NodeCount][3],
     }
 }
 
+// σ = D·ε (ізотропний матеріал, та сама D що при збірці K^e).
 StressTensor applyHookeLaw(const double strain[6], const double D[6][6])
 {
     StressTensor stress{};
@@ -48,6 +52,7 @@ StressTensor applyHookeLaw(const double strain[6], const double D[6][6])
 }
 } // namespace
 
+// Максимальний корінь кубічного рівняння напружень (формула Кардано / тригонометрична).
 double computeMaxPrincipalStress(const StressTensor& stress)
 {
     const double I1 = stress.sxx + stress.syy + stress.szz;
@@ -86,6 +91,7 @@ double computeMaxPrincipalStress(const StressTensor& stress)
     return (std::max)({s1, s2, s3});
 }
 
+// Мінімальне головне напруження σ3 (для оцінки стиску).
 double computeMinPrincipalStress(const StressTensor& stress)
 {
     const double I1 = stress.sxx + stress.syy + stress.szz;
@@ -124,6 +130,7 @@ double computeMinPrincipalStress(const StressTensor& stress)
     return (std::min)({s1, s2, s3});
 }
 
+// Напруження в вузлі СЕ: похідні ψ у локальних координатах вузла, J, B, ε, σ.
 StressTensor StressAnalyzer::computeStressAtElementNode(
     const Node elementNodes[kHex20NodeCount],
     const double elementDisplacements[kElementDofCount],
@@ -154,6 +161,7 @@ StressTensor StressAnalyzer::computeStressAtElementNode(
     return applyHookeLaw(strain, D);
 }
 
+// Усереднення σ по елементах, що сходяться у вузол; глобальні max(σ1), min(σ3).
 void StressAnalyzer::compute(const Mesh& mesh,
                              const GlobalSystem& system,
                              const MaterialProperties& material)
