@@ -1,6 +1,7 @@
 #include "GlobalSystem.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
@@ -8,6 +9,8 @@
 
 namespace
 {
+std::atomic<float> g_calculationProgress{0.0f};
+
 constexpr double kCoordTolerance = 1.0e-6;
 
 std::vector<int> fixedDofs;
@@ -39,6 +42,21 @@ void gatherElementNodes(const Mesh& mesh, const Element& element, Node elementNo
         elementNodes[i] = nodes[static_cast<std::size_t>(element.nodes[i])];
 }
 } // namespace
+
+float getCalculationProgress()
+{
+    return g_calculationProgress.load(std::memory_order_relaxed);
+}
+
+void resetCalculationProgress()
+{
+    g_calculationProgress.store(0.0f, std::memory_order_relaxed);
+}
+
+void setCalculationProgress(const float value)
+{
+    g_calculationProgress.store(value, std::memory_order_relaxed);
+}
 
 void GlobalSystem::allocate(const int dofCount, const int halfBandwidth)
 {
@@ -210,6 +228,10 @@ void GlobalSystem::solveBandedGauss()
 
     for (std::size_t i = 0; i < n; ++i)
     {
+        g_calculationProgress.store(
+            0.60f + 0.30f * static_cast<float>(i) / static_cast<float>(n > 0 ? n : 1),
+            std::memory_order_relaxed);
+
         const double pivot = at(i, i);
         if (std::abs(pivot) < 1.0e-14)
             throw std::runtime_error("Zero pivot in banded Gauss solver");
@@ -232,6 +254,10 @@ void GlobalSystem::solveBandedGauss()
     for (int i = dofCount_ - 1; i >= 0; --i)
     {
         const std::size_t ui = static_cast<std::size_t>(i);
+        g_calculationProgress.store(
+            0.90f + 0.09f * static_cast<float>(dofCount_ - i) / static_cast<float>(dofCount_ > 0 ? dofCount_ : 1),
+            std::memory_order_relaxed);
+
         const double pivot = at(ui, ui);
         const std::size_t colLimit = std::min(ui + static_cast<std::size_t>(halfBandwidth_ - 1), n - 1);
 
@@ -247,11 +273,16 @@ void GlobalSystem::buildFromMesh(const Mesh& mesh,
                                  const MaterialProperties& material,
                                  const double tractionY)
 {
+    g_calculationProgress.store(0.05f, std::memory_order_relaxed);
+
     const int halfBandwidth = mesh.computeHalfBandwidth();
     allocate(static_cast<int>(mesh.nodeCount()) * 3, halfBandwidth);
 
     const GaussShapeDerivativeCache& gaussCache = GaussShapeDerivativeCache::instance();
     Node elementNodes[kHex20NodeCount];
+
+    const std::size_t elementCount = mesh.getElements().size();
+    std::size_t elementIndex = 0;
 
     for (const Element& element : mesh.getElements())
     {
@@ -265,11 +296,22 @@ void GlobalSystem::buildFromMesh(const Mesh& mesh,
             Fe = assembleElementLoadVectorTopFace(elementNodes, -tractionY);
 
         assembleElement(element, Ke, Fe);
+
+        ++elementIndex;
+        if (elementCount > 0)
+        {
+            const float assemblyProgress =
+                0.05f + 0.50f * static_cast<float>(elementIndex) / static_cast<float>(elementCount);
+            g_calculationProgress.store(assemblyProgress, std::memory_order_relaxed);
+        }
     }
 
+    g_calculationProgress.store(0.58f, std::memory_order_relaxed);
     applyFixedFaceY0(mesh);
     applyOrphanConstraints(mesh);
+    g_calculationProgress.store(0.60f, std::memory_order_relaxed);
     solveBandedGauss();
+    g_calculationProgress.store(0.99f, std::memory_order_relaxed);
 }
 
 double GlobalSystem::maxDisplacementY() const

@@ -6,6 +6,11 @@
 
 constexpr double kPenaltyNumber = 1.0e30;
 
+// Прогрес розрахунку [0, 1] для UI (оновлюється під час збірки/розв'язання).
+float getCalculationProgress();
+void setCalculationProgress(float value);
+void resetCalculationProgress();
+
 // Глобальна система K·U = F у стрічковому форматі (Етап 3).
 class GlobalSystem
 {

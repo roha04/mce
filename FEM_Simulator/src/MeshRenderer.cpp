@@ -444,7 +444,9 @@ void MeshRenderer::render(const float scaleFactor,
                           const float aspectRatio,
                           const float cameraDist,
                           const float camAngleX,
-                          const float camAngleY) const
+                          const float camAngleY,
+                          const float camPanX,
+                          const float camPanY) const
 {
     if (vao_ == 0 || indexCount_ == 0)
         return;
@@ -457,8 +459,12 @@ void MeshRenderer::render(const float scaleFactor,
     const float zFar = (std::max)(cameraDist + modelExtent_ * 4.0f, 100.0f);
     makePerspective(45.0f * 3.14159265f / 180.0f, aspectRatio, zNear, zFar, projection);
 
-    // View: відсунути камеру вздовж -Z (дивимось на центр моделі).
-    makeTranslate(0.0f, 0.0f, -cameraDist, view);
+    // View = T(pan) * T(0,0,-dist) — віддалення та зсув у площині екрана.
+    float viewDist[16]{};
+    float viewPan[16]{};
+    makeTranslate(0.0f, 0.0f, -cameraDist, viewDist);
+    makeTranslate(camPanX, camPanY, 0.0f, viewPan);
+    multiplyMat4(viewPan, viewDist, view);
 
     // Model = T(center) * R_y * R_x * T(-center)
     float toCenter[16]{};

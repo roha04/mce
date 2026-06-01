@@ -20,7 +20,9 @@ public:
                 float aspectRatio,
                 float cameraDist,
                 float camAngleX,
-                float camAngleY) const;
+                float camAngleY,
+                float camPanX,
+                float camPanY) const;
     void shutdown();
 
     float minStress() const { return minStress_; }
