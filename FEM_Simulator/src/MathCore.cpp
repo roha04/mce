@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <stdexcept>
 
 namespace
@@ -86,7 +87,7 @@ void evaluateHex20Shape(double xi, double eta, double zeta,
             const double c = 1.0 + s2 * zeta;
 
             N[i] = 0.25 * a * b * c;
-            dN[i][0] = 0.25 * a * s0 * c;
+            dN[i][0] = 0.25 * s0 * b * c; // ∂/∂ξ: по (1+s0·ξ), не по (1−η²)
             dN[i][1] = -0.5 * eta * a * c;
             dN[i][2] = 0.25 * a * b * s2;
             break;
@@ -259,8 +260,9 @@ int Mesh::computeHalfBandwidth() const
         maxNodeSpan = std::max(maxNodeSpan, nMax - nMin);
     }
 
-    // 3 DOF на кожен вузол (u, v, w).
-    return maxNodeSpan * 3;
+    // 3 DOF на вузол: max |dof_i - dof_j| = 3*(nMax-nMin) + 2 (u..w).
+    // Стрічка зберігає пари з j-i < halfBandwidth, тому L >= 3*span + 3.
+    return (maxNodeSpan + 1) * 3;
 }
 
 std::vector<GaussPoint3D> generateGaussPoints3D()
@@ -461,6 +463,17 @@ ElementStiffnessMatrix assembleElementStiffnessMatrix(
         }
 
         Jacobian3x3 jacobian = computeJacobian(dNLocal, elementNodes);
+        if (jacobian.determinant <= 0.0)
+        {
+            std::cerr << "ERROR: det(J) = " << jacobian.determinant
+                      << " at Gauss point " << gp
+                      << " (xi=" << points[static_cast<std::size_t>(gp)].xi
+                      << ", eta=" << points[static_cast<std::size_t>(gp)].eta
+                      << ", zeta=" << points[static_cast<std::size_t>(gp)].zeta
+                      << "). Element may be inverted or node order is wrong.\n";
+            throw std::runtime_error("Non-positive Jacobian determinant in element stiffness assembly");
+        }
+
         double invJ[3][3];
         if (!jacobian.invert(invJ))
             throw std::runtime_error("Singular Jacobian in element stiffness assembly");

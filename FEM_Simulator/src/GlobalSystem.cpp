@@ -8,7 +8,29 @@
 
 namespace
 {
-constexpr double kCoordTolerance = 1.0e-9;
+constexpr double kCoordTolerance = 1.0e-6;
+
+std::vector<int> fixedDofs;
+
+void applyEssentialBCsToDense(const int dofCount, std::vector<double>& matrix, std::vector<double>& rhs)
+{
+    const std::size_t n = static_cast<std::size_t>(dofCount);
+    for (const int dof : fixedDofs)
+    {
+        if (dof < 0 || dof >= dofCount)
+            continue;
+
+        const std::size_t d = static_cast<std::size_t>(dof);
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            matrix[j * n + d] = 0.0;
+            matrix[d * n + j] = 0.0;
+        }
+
+        matrix[d * n + d] = kPenaltyNumber;
+        rhs[d] = 0.0;
+    }
+}
 
 void gatherElementNodes(const Mesh& mesh, const Element& element, Node elementNodes[kHex20NodeCount])
 {
@@ -110,22 +132,26 @@ void GlobalSystem::applyPenaltyToDof(const int dof)
     if (dof < 0 || dof >= dofCount_)
         return;
 
-    // Метод великого числа: лише діагональ, права частина = 0.
-    const double current = getK(dof, dof);
-    setK(dof, dof, current + kPenaltyNumber);
+    addK(dof, dof, kPenaltyNumber);
     f_[static_cast<std::size_t>(dof)] = 0.0;
 }
 
 void GlobalSystem::applyFixedFaceY0(const Mesh& mesh)
 {
+    fixedDofs.clear();
     const std::vector<Node>& nodes = mesh.getNodes();
-    for (std::size_t nodeId = 0; nodeId < nodes.size(); ++nodeId)
+
+    for (std::size_t i = 0; i < nodes.size(); ++i)
     {
-        if (std::abs(nodes[nodeId].y) <= kCoordTolerance)
+        if (std::abs(nodes[i].y) >= kCoordTolerance)
+            continue;
+
+        const int nodeId = static_cast<int>(i);
+        for (int component = 0; component < 3; ++component)
         {
-            applyPenaltyToDof(globalDof(static_cast<int>(nodeId), 0));
-            applyPenaltyToDof(globalDof(static_cast<int>(nodeId), 1));
-            applyPenaltyToDof(globalDof(static_cast<int>(nodeId), 2));
+            const int dof = globalDof(nodeId, component);
+            applyPenaltyToDof(dof);
+            fixedDofs.push_back(dof);
         }
     }
 }
@@ -175,6 +201,7 @@ void GlobalSystem::solveBandedGauss()
     std::vector<double> matrix;
     expandBandToDense(matrix);
     u_ = f_;
+    applyEssentialBCsToDense(dofCount_, matrix, u_);
 
     const std::size_t n = static_cast<std::size_t>(dofCount_);
     auto at = [&](std::size_t row, std::size_t col) -> double& {
@@ -235,7 +262,7 @@ void GlobalSystem::buildFromMesh(const Mesh& mesh,
         ElementLoadVector Fe{};
         Fe.fill(0.0);
         if (isElementOnTopFace(elementNodes, mesh.getLy()))
-            Fe = assembleElementLoadVectorTopFace(elementNodes, tractionY);
+            Fe = assembleElementLoadVectorTopFace(elementNodes, -tractionY);
 
         assembleElement(element, Ke, Fe);
     }

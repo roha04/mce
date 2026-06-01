@@ -47,7 +47,7 @@ public:
     void generateRectangularParallelepiped(double Lx, double Ly, double Lz,
                                          int Nx, int Ny, int Nz);
 
-    // L = max_e (N_max - N_min) * 3, де N — глобальні номери A_{i,e}.
+    // L = max_e (N_max - N_min + 1) * 3 — півширина стрічки для DOF u,v,w.
     int computeHalfBandwidth() const;
 
     const std::vector<Node>& getNodes() const { return nodes_; }
