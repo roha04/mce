@@ -37,9 +37,16 @@ out vec4 FragColor;
 
 uniform float u_MinStress;
 uniform float u_MaxStress;
+uniform bool u_IsWireframe;
 
 void main()
 {
+    if (u_IsWireframe)
+    {
+        FragColor = vec4(0.1, 0.1, 0.1, 1.0);
+        return;
+    }
+
     float normalized_stress = 0.0;
     if (u_MaxStress > u_MinStress)
         normalized_stress = clamp((vStress - u_MinStress) / (u_MaxStress - u_MinStress), 0.0, 1.0);
@@ -92,6 +99,60 @@ GLuint createProgram()
     if (!ok)
         throw std::runtime_error("Shader link error");
     return program;
+}
+
+void makeIdentity(float out[16])
+{
+    for (int i = 0; i < 16; ++i)
+        out[i] = 0.0f;
+    out[0] = out[5] = out[10] = out[15] = 1.0f;
+}
+
+void makeTranslate(const float tx, const float ty, const float tz, float out[16])
+{
+    makeIdentity(out);
+    out[12] = tx;
+    out[13] = ty;
+    out[14] = tz;
+}
+
+void makeRotateX(const float angle, float out[16])
+{
+    makeIdentity(out);
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    out[5] = c;
+    out[6] = s;
+    out[9] = -s;
+    out[10] = c;
+}
+
+void makeRotateY(const float angle, float out[16])
+{
+    makeIdentity(out);
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    out[0] = c;
+    out[2] = -s;
+    out[8] = s;
+    out[10] = c;
+}
+
+void multiplyMat4(const float a[16], const float b[16], float out[16])
+{
+    float temp[16]{};
+    for (int col = 0; col < 4; ++col)
+    {
+        for (int row = 0; row < 4; ++row)
+        {
+            double sum = 0.0;
+            for (int k = 0; k < 4; ++k)
+                sum += static_cast<double>(a[k * 4 + row]) * static_cast<double>(b[col * 4 + k]);
+            temp[col * 4 + row] = static_cast<float>(sum);
+        }
+    }
+    for (int i = 0; i < 16; ++i)
+        out[i] = temp[i];
 }
 
 void makePerspective(const float fovY, const float aspect, const float zNear, const float zFar, float out[16])
@@ -275,6 +336,12 @@ void MeshRenderer::build(const Mesh& mesh,
     if (!hasValidStress)
         maxStress_ = minStress_ + 1.0f;
 
+    modelCenterX_ = static_cast<float>(mesh.getLx() * 0.5);
+    modelCenterY_ = static_cast<float>(mesh.getLy() * 0.5);
+    modelCenterZ_ = static_cast<float>(mesh.getLz() * 0.5);
+    modelExtent_ = static_cast<float>(
+        std::sqrt(mesh.getLx() * mesh.getLx() + mesh.getLy() * mesh.getLy() + mesh.getLz() * mesh.getLz()));
+
     shaderProgram_ = createProgram();
     locProjection_ = glGetUniformLocation(shaderProgram_, "u_Projection");
     locView_ = glGetUniformLocation(shaderProgram_, "u_View");
@@ -282,6 +349,7 @@ void MeshRenderer::build(const Mesh& mesh,
     locScaleFactor_ = glGetUniformLocation(shaderProgram_, "u_ScaleFactor");
     locMinStress_ = glGetUniformLocation(shaderProgram_, "u_MinStress");
     locMaxStress_ = glGetUniformLocation(shaderProgram_, "u_MaxStress");
+    locIsWireframe_ = glGetUniformLocation(shaderProgram_, "u_IsWireframe");
     glGenVertexArrays(1, &vao_);
     glGenBuffers(1, &vbo_);
     glGenBuffers(1, &ebo_);
@@ -372,7 +440,11 @@ void MeshRenderer::uploadIndices()
     glBindVertexArray(0);
 }
 
-void MeshRenderer::render(const float scaleFactor, const float aspectRatio) const
+void MeshRenderer::render(const float scaleFactor,
+                          const float aspectRatio,
+                          const float cameraDist,
+                          const float camAngleX,
+                          const float camAngleY) const
 {
     if (vao_ == 0 || indexCount_ == 0)
         return;
@@ -381,15 +453,29 @@ void MeshRenderer::render(const float scaleFactor, const float aspectRatio) cons
     float view[16]{};
     float model[16]{};
 
-    for (int i = 0; i < 16; ++i)
-        model[i] = 0.0f;
-    model[0] = model[5] = model[10] = model[15] = 1.0f;
+    const float zNear = 0.1f;
+    const float zFar = (std::max)(cameraDist + modelExtent_ * 4.0f, 100.0f);
+    makePerspective(45.0f * 3.14159265f / 180.0f, aspectRatio, zNear, zFar, projection);
 
-    makePerspective(45.0f * 3.14159265f / 180.0f, aspectRatio, 0.1f, 200.0f, projection);
-    const float eye[3] = {18.0f, 10.0f, 16.0f};
-    const float center[3] = {5.0f, 2.5f, 1.5f};
-    const float up[3] = {0.0f, 1.0f, 0.0f};
-    makeLookAt(eye, center, up, view);
+    // View: відсунути камеру вздовж -Z (дивимось на центр моделі).
+    makeTranslate(0.0f, 0.0f, -cameraDist, view);
+
+    // Model = T(center) * R_y * R_x * T(-center)
+    float toCenter[16]{};
+    float fromCenter[16]{};
+    float rotX[16]{};
+    float rotY[16]{};
+    float rotYrotX[16]{};
+    float rotAtOrigin[16]{};
+
+    makeTranslate(modelCenterX_, modelCenterY_, modelCenterZ_, toCenter);
+    makeTranslate(-modelCenterX_, -modelCenterY_, -modelCenterZ_, fromCenter);
+    makeRotateX(camAngleX, rotX);
+    makeRotateY(camAngleY, rotY);
+
+    multiplyMat4(rotY, rotX, rotYrotX);
+    multiplyMat4(rotYrotX, fromCenter, rotAtOrigin);
+    multiplyMat4(toCenter, rotAtOrigin, model);
 
     glUseProgram(shaderProgram_);
     glUniformMatrix4fv(locProjection_, 1, GL_FALSE, projection);
@@ -400,7 +486,20 @@ void MeshRenderer::render(const float scaleFactor, const float aspectRatio) cons
     glUniform1f(locMaxStress_, maxStress_);
 
     glBindVertexArray(vao_);
+
+    // 1) Кольорова заливка (поля напружень)
+    glUniform1i(locIsWireframe_, 0);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(1.0f, 1.0f);
     glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, nullptr);
+
+    // 2) Каркас сітки поверх заливки
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    glUniform1i(locIsWireframe_, 1);
+    glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, nullptr);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
     glBindVertexArray(0);
 }
 

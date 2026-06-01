@@ -16,7 +16,11 @@ public:
 
     void updateIndices(const Mesh& mesh, bool showSectionX, bool showSectionZ);
 
-    void render(float scaleFactor, float aspectRatio) const;
+    void render(float scaleFactor,
+                float aspectRatio,
+                float cameraDist,
+                float camAngleX,
+                float camAngleY) const;
     void shutdown();
 
     float minStress() const { return minStress_; }
@@ -43,9 +47,15 @@ private:
     GLint locScaleFactor_ = -1;
     GLint locMinStress_ = -1;
     GLint locMaxStress_ = -1;
+    GLint locIsWireframe_ = -1;
 
     float minStress_ = 0.0f;
     float maxStress_ = 1.0f;
+
+    float modelCenterX_ = 0.0f;
+    float modelCenterY_ = 0.0f;
+    float modelCenterZ_ = 0.0f;
+    float modelExtent_ = 1.0f;
 
     std::vector<SurfaceVertex> vertices_;
     std::vector<unsigned int> indices_;

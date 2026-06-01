@@ -205,7 +205,13 @@ void drawSettingsWindow(SimulationParams& params, bool& runRequested)
     ImGui::End();
 }
 
-void drawResultsWindow(SimulationContext& ctx, float& scaleFactor, bool& showSectionX, bool& showSectionZ)
+void drawResultsWindow(SimulationContext& ctx,
+                       float& scaleFactor,
+                       bool& showSectionX,
+                       bool& showSectionZ,
+                       float& cameraDist,
+                       float& camAngleX,
+                       float& camAngleY)
 {
     ImGui::Begin(u8"Результати МСЕ");
     
@@ -229,6 +235,12 @@ void drawResultsWindow(SimulationContext& ctx, float& scaleFactor, bool& showSec
     
     ImGui::SliderFloat(u8"Масштаб деформації", &scaleFactor, 1.0f, 5000.0f, "%.0f",
                        ImGuiSliderFlags_Logarithmic);
+
+    ImGui::Separator();
+    ImGui::Text(u8"Камера");
+    ImGui::SliderFloat(u8"Віддалення (Zoom)", &cameraDist, 5.0f, 150.0f);
+    ImGui::SliderFloat(u8"Обертання X", &camAngleX, -3.14f, 3.14f);
+    ImGui::SliderFloat(u8"Обертання Y", &camAngleY, -3.14f, 3.14f);
     
     ImGui::Separator();
     ImGui::Checkbox(u8"Показати січення X", &showSectionX);
@@ -379,6 +391,9 @@ int main()
     MeshRenderer renderer;
 
     float scaleFactor = 100.0f;
+    float cameraDist = 40.0f;
+    float camAngleX = 0.5f;
+    float camAngleY = -0.5f;
     bool showSectionX = false;
     bool showSectionZ = false;
     bool prevSectionX = false;
@@ -419,9 +434,9 @@ int main()
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         if (simContext.hasResults)
-            renderer.render(scaleFactor, aspect);
+            renderer.render(scaleFactor, aspect, cameraDist, camAngleX, camAngleY);
 
-        drawResultsWindow(simContext, scaleFactor, showSectionX, showSectionZ);
+        drawResultsWindow(simContext, scaleFactor, showSectionX, showSectionZ, cameraDist, camAngleX, camAngleY);
         drawTableWindow(simContext);
 
         ImGui::Render();
