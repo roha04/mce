@@ -86,6 +86,44 @@ double computeMaxPrincipalStress(const StressTensor& stress)
     return (std::max)({s1, s2, s3});
 }
 
+double computeMinPrincipalStress(const StressTensor& stress)
+{
+    const double I1 = stress.sxx + stress.syy + stress.szz;
+    const double I2 = stress.sxx * stress.syy + stress.syy * stress.szz + stress.szz * stress.sxx
+                    - stress.sxy * stress.sxy - stress.syz * stress.syz - stress.sxz * stress.sxz;
+    const double I3 = stress.sxx * stress.syy * stress.szz
+                    + 2.0 * stress.sxy * stress.syz * stress.sxz
+                    - stress.sxx * stress.syz * stress.syz
+                    - stress.syy * stress.sxz * stress.sxz
+                    - stress.szz * stress.sxy * stress.sxy;
+
+    const double a = -I1;
+    const double b = I2;
+    const double c = -I3;
+
+    const double shift = a / 3.0;
+    const double p = b - a * a / 3.0;
+    const double q = 2.0 * a * a * a / 27.0 - a * b / 3.0 + c;
+
+    const double discriminant = q * q / 4.0 + p * p * p / 27.0;
+    if (discriminant >= 0.0)
+    {
+        const double sqrtDisc = std::sqrt(discriminant);
+        const double u = std::cbrt(-q / 2.0 + sqrtDisc);
+        const double v = std::cbrt(-q / 2.0 - sqrtDisc);
+        return u + v - shift;
+    }
+
+    const double r = std::sqrt(-p * p * p / 27.0);
+    const double phi = std::acos(std::clamp(-q / (2.0 * r), -1.0, 1.0));
+    const double m0 = 2.0 * std::cbrt(r);
+
+    const double s1 = m0 * std::cos(phi / 3.0) - shift;
+    const double s2 = m0 * std::cos((phi + 2.0 * 3.14159265358979323846) / 3.0) - shift;
+    const double s3 = m0 * std::cos((phi + 4.0 * 3.14159265358979323846) / 3.0) - shift;
+    return (std::min)({s1, s2, s3});
+}
+
 StressTensor StressAnalyzer::computeStressAtElementNode(
     const Node elementNodes[kHex20NodeCount],
     const double elementDisplacements[kElementDofCount],
@@ -97,11 +135,8 @@ StressTensor StressAnalyzer::computeStressAtElementNode(
     double zeta = 0.0;
     getHex20LocalNodeCoordinates(localNode, xi, eta, zeta);
 
-    double N[kHex20NodeCount];
     double dNLocal[kHex20NodeCount][3];
     computeHex20ShapeDerivativesLocal(xi, eta, zeta, dNLocal);
-    computeHex20ShapeFunctions(xi, eta, zeta, N);
-    (void)N;
 
     Jacobian3x3 jacobian = computeJacobian(dNLocal, elementNodes);
     double invJ[3][3];
@@ -126,6 +161,8 @@ void StressAnalyzer::compute(const Mesh& mesh,
     nodeResults_.assign(mesh.nodeCount(), NodeStressResult{});
     contributionCount_.assign(mesh.nodeCount(), 0);
     maxPrincipal_ = 0.0;
+    minPrincipal_ = 0.0;
+    bool hasPrincipal = false;
 
     const std::vector<double>& u = system.displacements();
     Node elementNodes[kHex20NodeCount];
@@ -175,7 +212,15 @@ void StressAnalyzer::compute(const Mesh& mesh,
         result.stress.syz *= inv;
         result.stress.sxz *= inv;
         result.principalMax = computeMaxPrincipalStress(result.stress);
+        result.principalMin = computeMinPrincipalStress(result.stress);
         result.valid = true;
         maxPrincipal_ = std::max(maxPrincipal_, result.principalMax);
+        if (!hasPrincipal)
+        {
+            minPrincipal_ = result.principalMin;
+            hasPrincipal = true;
+        }
+        else
+            minPrincipal_ = std::min(minPrincipal_, result.principalMin);
     }
 }

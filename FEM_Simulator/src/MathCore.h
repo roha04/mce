@@ -5,10 +5,13 @@
 #include <vector>
 
 constexpr int kHex20NodeCount = 20;
-constexpr int kElementDofCount = 60; // 20 вузлів × 3 DOF (u, v, w)
+constexpr int kElementDofCount = 60;
 constexpr int kGaussPointCount3D = 27;
+constexpr int kGaussPointCount2D = 9;
 
-// Глобальний вузол сітки: координати в декартовій системі (X, Y, Z).
+// Грань η = +1 (верхня Y = Ly), нумерація як у методичці / MeshRenderer.
+constexpr int kHexFaceEtaPlus = 5;
+
 struct Node
 {
     double x = 0.0;
@@ -16,10 +19,6 @@ struct Node
     double z = 0.0;
 };
 
-// 20-вузловий serendipity-шестигранник (HEX20):
-//   індекси 0..7  — кутові вузли;
-//   індекси 8..19 — вузли на серединах ребер.
-// nodes[i] зберігає глобальний номер i-го локального вузла (A_{i,e}).
 struct Element
 {
     int nodes[kHex20NodeCount]{};
@@ -40,18 +39,34 @@ struct GaussPoint3D
 };
 
 using ElementStiffnessMatrix = std::array<std::array<double, kElementDofCount>, kElementDofCount>;
+using ElementLoadVector = std::array<double, kElementDofCount>;
 
 class Mesh
 {
 public:
-    void generateRectangularParallelepiped(double Lx, double Ly, double Lz,
-                                         int Nx, int Ny, int Nz);
+    struct ZPEntry
+    {
+        int elementIndex = 0;
+        int faceIndex = kHexFaceEtaPlus;
+        double pressure = 0.0;
+    };
 
-    // L = max_e (N_max - N_min) * 3, де N — глобальні номери A_{i,e}.
+    void generateRectangularParallelepiped(double Lx, double Ly, double Lz, int Nx, int Ny, int Nz);
+
+    // ZU (30), ZP (31) — після generateRectangularParallelepiped.
+    void buildBoundaryData(double pressure);
+
     int computeHalfBandwidth() const;
 
     const std::vector<Node>& getNodes() const { return nodes_; }
     const std::vector<Element>& getElements() const { return elements_; }
+
+    // AKT (7): [0..nqp-1]=X, [nqp..2nqp-1]=Y, [2nqp..3nqp-1]=Z.
+    const std::vector<double>& getAKT() const { return akt_; }
+    // NT (21): NT[i][e] — глобальний номер i-го локального вузла e-го СЕ.
+    const std::vector<std::array<int, kHex20NodeCount>>& getNT() const { return nt_; }
+    const std::vector<int>& getZU() const { return zu_; }
+    const std::vector<ZPEntry>& getZP() const { return zp_; }
 
     std::size_t nodeCount() const { return nodes_.size(); }
     std::size_t elementCount() const { return elements_.size(); }
@@ -67,9 +82,14 @@ public:
 
 private:
     static int gridNodeIndex(int ix, int iy, int iz, int Nx, int Ny);
+    void buildAKTandNT();
 
     std::vector<Node> nodes_;
     std::vector<Element> elements_;
+    std::vector<double> akt_;
+    std::vector<std::array<int, kHex20NodeCount>> nt_;
+    std::vector<int> zu_;
+    std::vector<ZPEntry> zp_;
     double lx_ = 0.0;
     double ly_ = 0.0;
     double lz_ = 0.0;
@@ -78,23 +98,20 @@ private:
     int nz_ = 0;
 };
 
-// --- Етап 2: локальні координати та інтегрування ---
-
 std::vector<GaussPoint3D> generateGaussPoints3D();
+std::vector<GaussPoint3D> generateGaussPoints2D();
 
 void computeHex20ShapeFunctions(double xi, double eta, double zeta, double N[kHex20NodeCount]);
-
 void computeHex20ShapeDerivativesLocal(double xi, double eta, double zeta,
                                        double dN[kHex20NodeCount][3]);
 
+// DFIABG (39): ∂ψ/∂(ξ,η,ζ) у 27 вузлах Гауса.
 class GaussShapeDerivativeCache
 {
 public:
     static const GaussShapeDerivativeCache& instance();
 
     const std::vector<GaussPoint3D>& gaussPoints() const { return points_; }
-
-    // ∂N_node/∂(ξ,η,ζ) у вузлі Гауса gp.
     const double* dNLocal(int gp, int node) const;
 
 private:
@@ -103,6 +120,30 @@ private:
     std::vector<GaussPoint3D> points_;
     double dN_[kGaussPointCount3D][kHex20NodeCount][3]{};
 };
+
+using DFIABGCache = GaussShapeDerivativeCache;
+
+// DPSITE (46): ψ та ∂ψ/∂h, ∂ψ/∂t на грані η=+1 у 9 вузлах Гауса.
+class FaceGaussShapeCache
+{
+public:
+    static const FaceGaussShapeCache& instance();
+
+    const std::vector<GaussPoint3D>& gaussPoints2D() const { return points2d_; }
+    double shapeValue(int gp, int node) const;
+    double shapeDerivH(int gp, int node) const;
+    double shapeDerivT(int gp, int node) const;
+
+private:
+    FaceGaussShapeCache();
+
+    std::vector<GaussPoint3D> points2d_;
+    double psi_[kGaussPointCount2D][kHex20NodeCount]{};
+    double dPsiDh_[kGaussPointCount2D][kHex20NodeCount]{};
+    double dPsiDt_[kGaussPointCount2D][kHex20NodeCount]{};
+};
+
+using DPSITECache = FaceGaussShapeCache;
 
 struct Jacobian3x3
 {
@@ -126,18 +167,14 @@ ElementStiffnessMatrix assembleElementStiffnessMatrix(
     const MaterialProperties& material,
     const GaussShapeDerivativeCache& gaussCache = GaussShapeDerivativeCache::instance());
 
-using ElementLoadVector = std::array<double, kElementDofCount>;
-
-constexpr int kGaussPointCount2D = 9;
-
-std::vector<GaussPoint3D> generateGaussPoints2D();
-
-// F^e для грані η = +1 (верхня грань Y = Ly): тяга tractionY [Пa] у напрямку +Y.
 ElementLoadVector assembleElementLoadVectorTopFace(const Node elementNodes[kHex20NodeCount],
-                                                   double tractionY);
+                                                   double tractionY,
+                                                   int faceIndex = kHexFaceEtaPlus);
 
 bool isElementOnTopFace(const Node elementNodes[kHex20NodeCount], double ly, double tolerance = 1.0e-9);
 bool isElementOnBottomFace(const Node elementNodes[kHex20NodeCount], double tolerance = 1.0e-9);
 
-// Локальні координати (ξ,η,ζ) вузла HEX20 у [-1,1]^3.
 void getHex20LocalNodeCoordinates(int localNode, double& xi, double& eta, double& zeta);
+
+// Маркер налагодження (заняття 13): det(J)=8 на одиничному кубі.
+double verifyUnitCubeJacobianDeterminant();

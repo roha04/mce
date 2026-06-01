@@ -6,25 +6,37 @@
 
 constexpr double kPenaltyNumber = 1.0e30;
 
-// Глобальна система K·U = F у стрічковому форматі (Етап 3).
+float getCalculationProgress();
+void setCalculationProgress(float value);
+void resetCalculationProgress();
+
+// Глобальна система K·U = F у стрічковому форматі MG (заняття 9–11).
 class GlobalSystem
 {
 public:
     void buildFromMesh(const Mesh& mesh, const MaterialProperties& material, double tractionY);
 
+    // Збірка MG та F без крайових умов і без розв'язання (тест зан. 13).
+    void assembleFromMesh(const Mesh& mesh, const MaterialProperties& material, bool includeSurfaceLoads);
+
+    void applyBoundaryConditions(const Mesh& mesh);
+
     int dofCount() const { return dofCount_; }
     int halfBandwidth() const { return halfBandwidth_; }
-    int orphanNodeCount() const { return orphanNodeCount_; }
 
     const std::vector<double>& displacements() const { return u_; }
     const std::vector<double>& forceVector() const { return f_; }
+    const std::vector<double>& stiffnessBand() const { return kBand_; }
+
     double maxDisplacementY() const;
     double totalReactionForceY() const;
+
+    // Перезапуск розв'язувача з новим F (налагодження, заняття 13).
+    void setForceAndSolve(const std::vector<double>& force);
 
 private:
     void allocate(int dofCount, int halfBandwidth);
 
-    // Конвертація (i, j) -> 1D індекс стрічкового масиву (лише j >= i).
     int bandIndex(int i, int j) const;
     double getK(int i, int j) const;
     void setK(int i, int j, double value);
@@ -37,16 +49,13 @@ private:
                          const ElementStiffnessMatrix& Ke,
                          const ElementLoadVector& Fe);
 
-    void applyFixedFaceY0(const Mesh& mesh);
-    void applyOrphanConstraints(const Mesh& mesh);
+    void applyFixedFaceZU(const Mesh& mesh);
     void applyPenaltyToDof(int dof);
 
-    void expandBandToDense(std::vector<double>& dense) const;
     void solveBandedGauss();
 
     int dofCount_ = 0;
     int halfBandwidth_ = 0;
-    int orphanNodeCount_ = 0;
 
     std::vector<double> kBand_;
     std::vector<double> f_;

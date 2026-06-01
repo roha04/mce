@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <stdexcept>
 
 namespace
@@ -86,7 +87,7 @@ void evaluateHex20Shape(double xi, double eta, double zeta,
             const double c = 1.0 + s2 * zeta;
 
             N[i] = 0.25 * a * b * c;
-            dN[i][0] = 0.25 * a * s0 * c;
+            dN[i][0] = 0.25 * s0 * b * c; // ∂/∂ξ: по (1+s0·ξ), не по (1−η²)
             dN[i][1] = -0.5 * eta * a * c;
             dN[i][2] = 0.25 * a * b * s2;
             break;
@@ -162,6 +163,10 @@ void Mesh::clear()
 {
     nodes_.clear();
     elements_.clear();
+    akt_.clear();
+    nt_.clear();
+    zu_.clear();
+    zp_.clear();
 }
 
 int Mesh::gridNodeIndex(int ix, int iy, int iz, int Nx, int Ny)
@@ -192,25 +197,10 @@ void Mesh::generateRectangularParallelepiped(double Lx, double Ly, double Lz,
     const int gridNx = 2 * Nx + 1;
     const int gridNy = 2 * Ny + 1;
     const int gridNz = 2 * Nz + 1;
+    const int gridSize = gridNx * gridNy * gridNz;
 
-    nodes_.resize(static_cast<std::size_t>(gridNx * gridNy * gridNz));
-
-    for (int iz = 0; iz < gridNz; ++iz)
-    {
-        for (int iy = 0; iy < gridNy; ++iy)
-        {
-            for (int ix = 0; ix < gridNx; ++ix)
-            {
-                const int id = gridNodeIndex(ix, iy, iz, Nx, Ny);
-                nodes_[static_cast<std::size_t>(id)] = {
-                    Lx * static_cast<double>(ix) / (2.0 * Nx),
-                    Ly * static_cast<double>(iy) / (2.0 * Ny),
-                    Lz * static_cast<double>(iz) / (2.0 * Nz)};
-            }
-        }
-    }
-
-    elements_.resize(static_cast<std::size_t>(Nx * Ny * Nz));
+    std::vector<unsigned char> nodeUsed(static_cast<std::size_t>(gridSize), 0);
+    std::vector<Element> tempElements(static_cast<std::size_t>(Nx * Ny * Nz));
 
     std::size_t elemId = 0;
     for (int ez = 0; ez < Nz; ++ez)
@@ -226,10 +216,118 @@ void Mesh::generateRectangularParallelepiped(double Lx, double Ly, double Lz,
                     const int ix = 2 * ex + kHex20Offsets[local][0];
                     const int iy = 2 * ey + kHex20Offsets[local][1];
                     const int iz = 2 * ez + kHex20Offsets[local][2];
-                    element.nodes[local] = gridNodeIndex(ix, iy, iz, Nx, Ny);
+                    const int logical = gridNodeIndex(ix, iy, iz, Nx, Ny);
+                    element.nodes[local] = logical;
+                    nodeUsed[static_cast<std::size_t>(logical)] = 1;
                 }
 
-                elements_[elemId++] = element;
+                tempElements[elemId++] = element;
+            }
+        }
+    }
+
+    std::vector<int> logicalToCompact(static_cast<std::size_t>(gridSize), -1);
+    int compactCount = 0;
+    for (int iz = 0; iz < gridNz; ++iz)
+    {
+        for (int iy = 0; iy < gridNy; ++iy)
+        {
+            for (int ix = 0; ix < gridNx; ++ix)
+            {
+                const int logical = gridNodeIndex(ix, iy, iz, Nx, Ny);
+                if (!nodeUsed[static_cast<std::size_t>(logical)])
+                    continue;
+
+                logicalToCompact[static_cast<std::size_t>(logical)] = compactCount++;
+            }
+        }
+    }
+
+    nodes_.resize(static_cast<std::size_t>(compactCount));
+    for (int iz = 0; iz < gridNz; ++iz)
+    {
+        for (int iy = 0; iy < gridNy; ++iy)
+        {
+            for (int ix = 0; ix < gridNx; ++ix)
+            {
+                const int logical = gridNodeIndex(ix, iy, iz, Nx, Ny);
+                const int compact = logicalToCompact[static_cast<std::size_t>(logical)];
+                if (compact < 0)
+                    continue;
+
+                nodes_[static_cast<std::size_t>(compact)] = {
+                    Lx * static_cast<double>(ix) / (2.0 * Nx),
+                    Ly * static_cast<double>(iy) / (2.0 * Ny),
+                    Lz * static_cast<double>(iz) / (2.0 * Nz)};
+            }
+        }
+    }
+
+    elements_.resize(tempElements.size());
+    for (std::size_t e = 0; e < tempElements.size(); ++e)
+    {
+        Element element{};
+        for (int local = 0; local < kHex20NodeCount; ++local)
+        {
+            const int logical = tempElements[e].nodes[local];
+            element.nodes[local] = logicalToCompact[static_cast<std::size_t>(logical)];
+        }
+        elements_[e] = element;
+    }
+
+    buildAKTandNT();
+}
+
+void Mesh::buildAKTandNT()
+{
+    const std::size_t nqp = nodes_.size();
+    const std::size_t nel = elements_.size();
+
+    akt_.resize(nqp * 3);
+    for (std::size_t j = 0; j < nqp; ++j)
+    {
+        akt_[j] = nodes_[j].x;
+        akt_[nqp + j] = nodes_[j].y;
+        akt_[2 * nqp + j] = nodes_[j].z;
+    }
+
+    nt_.resize(nel);
+    for (std::size_t e = 0; e < nel; ++e)
+    {
+        for (int i = 0; i < kHex20NodeCount; ++i)
+            nt_[e][static_cast<std::size_t>(i)] = elements_[e].nodes[i];
+    }
+}
+
+void Mesh::buildBoundaryData(const double pressure)
+{
+    zu_.clear();
+    zp_.clear();
+
+    constexpr double kTol = 1.0e-6;
+    for (std::size_t nodeId = 0; nodeId < nodes_.size(); ++nodeId)
+    {
+        if (std::abs(nodes_[nodeId].y) <= kTol)
+            zu_.push_back(static_cast<int>(nodeId));
+    }
+
+    for (int ez = 0; ez < nz_; ++ez)
+    {
+        for (int ey = 0; ey < ny_; ++ey)
+        {
+            for (int ex = 0; ex < nx_; ++ex)
+            {
+                if (ey != ny_ - 1)
+                    continue;
+
+                const std::size_t elemIndex =
+                    static_cast<std::size_t>(ex + ey * nx_ + ez * nx_ * ny_);
+
+                ZPEntry entry;
+                entry.elementIndex = static_cast<int>(elemIndex);
+                entry.faceIndex = kHexFaceEtaPlus;
+                entry.pressure = pressure;
+                zp_.push_back(entry);
             }
         }
     }
@@ -259,8 +357,9 @@ int Mesh::computeHalfBandwidth() const
         maxNodeSpan = std::max(maxNodeSpan, nMax - nMin);
     }
 
-    // 3 DOF на кожен вузол (u, v, w).
-    return maxNodeSpan * 3;
+    // 3 DOF на вузол: max |dof_i - dof_j| = 3*(nMax-nMin) + 2 (u..w).
+    // Стрічка зберігає пари з j-i < halfBandwidth, тому L >= 3*span + 3.
+    return (maxNodeSpan + 1) * 3;
 }
 
 std::vector<GaussPoint3D> generateGaussPoints3D()
@@ -327,6 +426,46 @@ const GaussShapeDerivativeCache& GaussShapeDerivativeCache::instance()
 const double* GaussShapeDerivativeCache::dNLocal(int gp, int node) const
 {
     return dN_[gp][node];
+}
+
+FaceGaussShapeCache::FaceGaussShapeCache()
+{
+    points2d_ = generateGaussPoints2D();
+    constexpr double etaFace = 1.0;
+
+    for (int gp = 0; gp < kGaussPointCount2D; ++gp)
+    {
+        const GaussPoint3D& point = points2d_[static_cast<std::size_t>(gp)];
+        double dN[kHex20NodeCount][3];
+        evaluateHex20Shape(point.xi, etaFace, point.eta, psi_[gp], dN);
+
+        for (int node = 0; node < kHex20NodeCount; ++node)
+        {
+            dPsiDh_[gp][node] = dN[node][0];
+            dPsiDt_[gp][node] = dN[node][2];
+        }
+    }
+}
+
+const FaceGaussShapeCache& FaceGaussShapeCache::instance()
+{
+    static const FaceGaussShapeCache cache;
+    return cache;
+}
+
+double FaceGaussShapeCache::shapeValue(const int gp, const int node) const
+{
+    return psi_[gp][node];
+}
+
+double FaceGaussShapeCache::shapeDerivH(const int gp, const int node) const
+{
+    return dPsiDh_[gp][node];
+}
+
+double FaceGaussShapeCache::shapeDerivT(const int gp, const int node) const
+{
+    return dPsiDt_[gp][node];
 }
 
 bool Jacobian3x3::invert(double inverse[3][3]) const
@@ -461,6 +600,17 @@ ElementStiffnessMatrix assembleElementStiffnessMatrix(
         }
 
         Jacobian3x3 jacobian = computeJacobian(dNLocal, elementNodes);
+        if (jacobian.determinant <= 0.0)
+        {
+            std::cerr << "ERROR: det(J) = " << jacobian.determinant
+                      << " at Gauss point " << gp
+                      << " (xi=" << points[static_cast<std::size_t>(gp)].xi
+                      << ", eta=" << points[static_cast<std::size_t>(gp)].eta
+                      << ", zeta=" << points[static_cast<std::size_t>(gp)].zeta
+                      << "). Element may be inverted or node order is wrong.\n";
+            throw std::runtime_error("Non-positive Jacobian determinant in element stiffness assembly");
+        }
+
         double invJ[3][3];
         if (!jacobian.invert(invJ))
             throw std::runtime_error("Singular Jacobian in element stiffness assembly");
@@ -530,45 +680,71 @@ bool isElementOnBottomFace(const Node elementNodes[kHex20NodeCount], const doubl
 }
 
 ElementLoadVector assembleElementLoadVectorTopFace(const Node elementNodes[kHex20NodeCount],
-                                                   const double tractionY)
+                                                   const double tractionY,
+                                                   const int faceIndex)
 {
     ElementLoadVector Fe{};
     Fe.fill(0.0);
 
-    const std::vector<GaussPoint3D> points = generateGaussPoints2D();
-    constexpr double etaFace = 1.0;
+    if (faceIndex != kHexFaceEtaPlus)
+        return Fe;
 
-    for (const GaussPoint3D& gp : points)
+    const FaceGaussShapeCache& dpsite = FaceGaussShapeCache::instance();
+    const std::vector<GaussPoint3D>& points = dpsite.gaussPoints2D();
+
+    for (int gp = 0; gp < kGaussPointCount2D; ++gp)
     {
-        double N[kHex20NodeCount];
-        double dN[kHex20NodeCount][3];
-        evaluateHex20Shape(gp.xi, etaFace, gp.eta, N, dN);
-
-        double tangentXi[3]{};
-        double tangentZeta[3]{};
+        double tangentH[3]{};
+        double tangentT[3]{};
         for (int k = 0; k < kHex20NodeCount; ++k)
         {
             const double coords[3] = {elementNodes[k].x, elementNodes[k].y, elementNodes[k].z};
+            const double dH = dpsite.shapeDerivH(gp, k);
+            const double dT = dpsite.shapeDerivT(gp, k);
             for (int dim = 0; dim < 3; ++dim)
             {
-                tangentXi[dim] += dN[k][0] * coords[dim];
-                tangentZeta[dim] += dN[k][2] * coords[dim];
+                tangentH[dim] += dH * coords[dim];
+                tangentT[dim] += dT * coords[dim];
             }
         }
 
         const double normal[3] = {
-            tangentXi[1] * tangentZeta[2] - tangentXi[2] * tangentZeta[1],
-            tangentXi[2] * tangentZeta[0] - tangentXi[0] * tangentZeta[2],
-            tangentXi[0] * tangentZeta[1] - tangentXi[1] * tangentZeta[0]};
+            tangentH[1] * tangentT[2] - tangentH[2] * tangentT[1],
+            tangentH[2] * tangentT[0] - tangentH[0] * tangentT[2],
+            tangentH[0] * tangentT[1] - tangentH[1] * tangentT[0]};
 
         const double areaScale = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
-        const double integrationWeight = gp.weight * areaScale;
+        const double integrationWeight = points[static_cast<std::size_t>(gp)].weight * areaScale;
 
         for (int i = 0; i < kHex20NodeCount; ++i)
-            Fe[3 * i + 1] += N[i] * tractionY * integrationWeight;
+            Fe[3 * i + 1] += dpsite.shapeValue(gp, i) * tractionY * integrationWeight;
     }
 
     return Fe;
+}
+
+double verifyUnitCubeJacobianDeterminant()
+{
+    // Методичка (зан. 13): det(J) = V_фіз / V_станд, V_станд = 8 (куб у [-1,1]^3).
+    // Для фізичного куба 4×4×4 (вузли в ±2) ізотропна довжина ребра 4 => det(J) ≈ 8 у центрі.
+    constexpr double kPhysicalHalfSpan = 2.0;
+
+    Node unitNodes[kHex20NodeCount];
+    for (int i = 0; i < kHex20NodeCount; ++i)
+    {
+        double xi = 0.0;
+        double eta = 0.0;
+        double zeta = 0.0;
+        getHex20LocalNodeCoordinates(i, xi, eta, zeta);
+        unitNodes[i].x = kPhysicalHalfSpan * xi;
+        unitNodes[i].y = kPhysicalHalfSpan * eta;
+        unitNodes[i].z = kPhysicalHalfSpan * zeta;
+    }
+
+    double dNLocal[kHex20NodeCount][3];
+    computeHex20ShapeDerivativesLocal(0.0, 0.0, 0.0, dNLocal);
+    const Jacobian3x3 jacobian = computeJacobian(dNLocal, unitNodes);
+    return jacobian.determinant;
 }
 
 void getHex20LocalNodeCoordinates(const int localNode, double& xi, double& eta, double& zeta)
