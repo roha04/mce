@@ -20,6 +20,8 @@
 
 #include "StressAnalysis.h"
 
+#include "FemValidation.h"
+
 
 
 #include <algorithm>
@@ -159,7 +161,7 @@ bool exportResultsToCsv(const SimulationContext& ctx)
 
     file << std::setprecision(10);
 
-    file << "ID,X,Y,Z,U_x,U_y,U_z,Sigma_1\n";
+    file << "ID,X,Y,Z,U_x,U_y,U_z,Sigma_1,Sigma_3\n";
 
 
 
@@ -195,7 +197,9 @@ bool exportResultsToCsv(const SimulationContext& ctx)
 
              << u[id * 3 + 2] << ','
 
-             << stressResults[id].principalMax << '\n';
+             << stressResults[id].principalMax << ','
+
+             << stressResults[id].principalMin << '\n';
 
     }
 
@@ -303,7 +307,7 @@ SimulationComputeResult runSimulationCompute(const SimulationParams& params)
 
             params.Nz);
 
-
+        result.context.mesh.buildBoundaryData(static_cast<double>(params.pressure));
 
         MaterialProperties material;
 
@@ -478,6 +482,116 @@ bool pollSimulationAsync(AsyncSimulationState& asyncState,
 
 
 
+void rebuildMeshPreview(const SimulationParams& params, Mesh& previewMesh, MeshRenderer& renderer)
+{
+    previewMesh.clear();
+    previewMesh.generateRectangularParallelepiped(
+        static_cast<double>(params.Lx),
+        static_cast<double>(params.Ly),
+        static_cast<double>(params.Lz),
+        params.Nx,
+        params.Ny,
+        params.Nz);
+    previewMesh.buildBoundaryData(static_cast<double>(params.pressure));
+    renderer.buildMeshPreview(previewMesh);
+}
+
+void drawWorkingArraysWindow(const SimulationContext& ctx, const Mesh& previewMesh, bool hasPreview)
+{
+    ImGui::Begin(u8"Робочі масиви (п.20 viii)");
+
+    const Mesh& mesh = ctx.hasResults ? ctx.mesh : previewMesh;
+    const bool hasMesh = ctx.hasResults || hasPreview;
+
+    if (!hasMesh)
+    {
+        ImGui::Text(u8"Згенеруйте сітку кнопкою «Оновити сітку» або виконайте розрахунок.");
+        ImGui::End();
+        return;
+    }
+
+    const std::size_t nqp = mesh.nodeCount();
+    const std::size_t nel = mesh.elementCount();
+    ImGui::Text(u8"nqp = %zu, nel = %zu", nqp, nel);
+    ImGui::Text(u8"|ZU| = %zu, |ZP| = %zu", mesh.getZU().size(), mesh.getZP().size());
+
+    if (ctx.hasResults)
+    {
+        ImGui::Text(u8"MG (стрічка): %zu елементів, L = %d",
+                    ctx.system.stiffnessBand().size(),
+                    ctx.system.halfBandwidth());
+        ImGui::Text(u8"|F| = %zu, |U| = %zu",
+                    ctx.system.forceVector().size(),
+                    ctx.system.displacements().size());
+    }
+
+    if (ImGui::CollapsingHeader(u8"AKT (7) — перші 8 вузлів"))
+    {
+        const std::vector<double>& akt = mesh.getAKT();
+        if (ImGui::BeginTable(u8"AktTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
+        {
+            ImGui::TableSetupColumn(u8"ID");
+            ImGui::TableSetupColumn(u8"X");
+            ImGui::TableSetupColumn(u8"Y");
+            ImGui::TableSetupColumn(u8"Z");
+            ImGui::TableHeadersRow();
+            const int rows = static_cast<int>((std::min)(nqp, std::size_t{8}));
+            for (int j = 0; j < rows; ++j)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("%d", j);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.4f", akt[static_cast<std::size_t>(j)]);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.4f", akt[nqp + static_cast<std::size_t>(j)]);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.4f", akt[2 * nqp + static_cast<std::size_t>(j)]);
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    if (ImGui::CollapsingHeader(u8"NT (21) — перший СЕ"))
+    {
+        if (!mesh.getNT().empty())
+        {
+            const auto& nt0 = mesh.getNT()[0];
+            for (int i = 0; i < kHex20NodeCount; ++i)
+                ImGui::Text(u8"NT[%d,0] = %d", i, nt0[static_cast<std::size_t>(i)]);
+        }
+    }
+
+    if (ImGui::CollapsingHeader(u8"ZU (30)"))
+    {
+        for (std::size_t i = 0; i < mesh.getZU().size() && i < 16; ++i)
+            ImGui::Text(u8"ZU[%zu] = %d", i, mesh.getZU()[i]);
+    }
+
+    if (ImGui::CollapsingHeader(u8"ZP (31)"))
+    {
+        for (std::size_t i = 0; i < mesh.getZP().size() && i < 8; ++i)
+        {
+            const Mesh::ZPEntry& e = mesh.getZP()[i];
+            ImGui::Text(u8"ZP[%zu]: elem=%d face=%d P=%.3e", i, e.elementIndex, e.faceIndex, e.pressure);
+        }
+    }
+
+    if (ctx.hasResults && ImGui::CollapsingHeader(u8"MG, F, U — зріз"))
+    {
+        const auto& band = ctx.system.stiffnessBand();
+        const auto& f = ctx.system.forceVector();
+        const auto& u = ctx.system.displacements();
+        const int show = static_cast<int>((std::min)(f.size(), std::size_t{12}));
+        for (int i = 0; i < show; ++i)
+            ImGui::Text(u8"F[%d]=%.3e  U[%d]=%.3e", i, f[static_cast<std::size_t>(i)], i, u[static_cast<std::size_t>(i)]);
+        if (!band.empty())
+            ImGui::Text(u8"MG[0]=%.3e", band[0]);
+    }
+
+    ImGui::End();
+}
+
 void drawCalculationProgress(bool computeRunning)
 
 {
@@ -498,7 +612,11 @@ void drawCalculationProgress(bool computeRunning)
 
 
 
-void drawSettingsWindow(SimulationParams& params, bool& runRequested, bool computeRunning)
+void drawSettingsWindow(SimulationParams& params,
+                        bool& runRequested,
+                        bool& meshPreviewRequested,
+                        bool& validationRequested,
+                        bool computeRunning)
 
 {
 
@@ -580,13 +698,16 @@ void drawSettingsWindow(SimulationParams& params, bool& runRequested, bool compu
 
     ImGui::BeginDisabled(computeRunning);
 
-    if (ImGui::Button(u8"Обчислити (Перерахувати)", ImVec2(-1.0f, 0.0f)))
+    if (ImGui::Button(u8"Оновити сітку (тріангуляція)", ImVec2(-1.0f, 0.0f)))
+        meshPreviewRequested = true;
 
+    if (ImGui::Button(u8"Обчислити (Перерахувати)", ImVec2(-1.0f, 0.0f)))
         runRequested = true;
 
+    if (ImGui::Button(u8"Перевірки методички (зан. 13)", ImVec2(-1.0f, 0.0f)))
+        validationRequested = true;
+
     ImGui::EndDisabled();
-
-
 
     ImGui::End();
 
@@ -659,15 +780,17 @@ void drawResultsWindow(SimulationContext& ctx,
 
     ImGui::Text(u8"DOF: %d", ctx.system.dofCount());
 
-    ImGui::Text(u8"Півширина L: %d", ctx.system.halfBandwidth());
+    ImGui::Text(u8"Півширина L (ng): %d", ctx.system.halfBandwidth());
 
-    ImGui::Text(u8"Orphan-вузлів: %d", ctx.system.orphanNodeCount());
+    ImGui::Text(u8"|ZU| = %zu, |ZP| = %zu", ctx.mesh.getZU().size(), ctx.mesh.getZP().size());
 
     ImGui::Separator();
 
     ImGui::Text(u8"max |U_y| = %.6e м", ctx.system.maxDisplacementY());
 
-    ImGui::Text(u8"max σ₁ = %.6e Па", ctx.stressAnalyzer.maxPrincipalStress());
+    ImGui::Text(u8"σ₁ (max) = %.6e Па", ctx.stressAnalyzer.maxPrincipalStress());
+
+    ImGui::Text(u8"σ₃ (min) = %.6e Па", ctx.stressAnalyzer.minPrincipalStress());
 
 
 
@@ -787,7 +910,7 @@ void drawTableWindow(SimulationContext& ctx, bool computeRunning)
 
                                       | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
 
-    if (ImGui::BeginTable(u8"ResultsTable", 8, tableFlags, ImVec2(0.0f, 400.0f)))
+    if (ImGui::BeginTable(u8"ResultsTable", 9, tableFlags, ImVec2(0.0f, 400.0f)))
 
     {
 
@@ -806,6 +929,8 @@ void drawTableWindow(SimulationContext& ctx, bool computeRunning)
         ImGui::TableSetupColumn(u8"U_z");
 
         ImGui::TableSetupColumn(u8"Sigma_1");
+
+        ImGui::TableSetupColumn(u8"Sigma_3");
 
         ImGui::TableSetupScrollFreeze(0, 1);
 
@@ -874,6 +999,10 @@ void drawTableWindow(SimulationContext& ctx, bool computeRunning)
                 ImGui::TableNextColumn();
 
                 ImGui::Text("%.6e", stressResults[id].principalMax);
+
+                ImGui::TableNextColumn();
+
+                ImGui::Text("%.6e", stressResults[id].principalMin);
 
             }
 
@@ -1025,9 +1154,13 @@ int main()
 
     bool prevSectionZ = false;
 
+    Mesh previewMesh;
+    bool meshPreviewReady = false;
+    FemValidationReport validationReport{};
+    bool showValidationPopup = false;
 
-
-    startSimulationAsync(asyncState, params);
+    rebuildMeshPreview(params, previewMesh, renderer);
+    meshPreviewReady = true;
 
 
 
@@ -1053,14 +1186,46 @@ int main()
 
 
         bool runRequested = false;
+        bool meshPreviewRequested = false;
+        bool validationRequested = false;
 
-        drawSettingsWindow(params, runRequested, asyncState.running);
+        drawSettingsWindow(params, runRequested, meshPreviewRequested, validationRequested, asyncState.running);
 
+        if (meshPreviewRequested && !asyncState.running)
+        {
+            rebuildMeshPreview(params, previewMesh, renderer);
+            meshPreviewReady = true;
+            applyAutoFitCamera(params, cameraDist, camPanX, camPanY);
+        }
 
+        if (validationRequested && !asyncState.running)
+        {
+            validationReport = runFemValidationChecks();
+            showValidationPopup = true;
+        }
 
         if (runRequested && !asyncState.running)
-
             startSimulationAsync(asyncState, params);
+
+        if (showValidationPopup)
+            ImGui::OpenPopup(u8"ValidationReport");
+        if (ImGui::BeginPopupModal(u8"ValidationReport", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::Text(u8"det(J) у центрі куба 4x4x4 м = %.6f (очікується 8)", validationReport.jacobianUnitCubeDet);
+            ImGui::TextColored(
+                validationReport.jacobianUnitCubeOk ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f) : ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                validationReport.jacobianUnitCubeOk ? u8"OK" : u8"FAIL");
+            ImGui::Text(u8"Тест СЛАР (K без КУ): F_i=sum_j K_ij, max|U-1| = %.3e", validationReport.solverUnitRhsMaxError);
+            ImGui::TextColored(
+                validationReport.solverUnitRhsOk ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f) : ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                validationReport.solverUnitRhsOk ? u8"OK" : u8"FAIL");
+            if (ImGui::Button(u8"Закрити"))
+            {
+                showValidationPopup = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
 
 
 
@@ -1101,8 +1266,9 @@ int main()
 
 
         if (simContext.hasResults && !asyncState.running)
-
             renderer.render(scaleFactor, aspect, cameraDist, camAngleX, camAngleY, camPanX, camPanY);
+        else if (meshPreviewReady && !asyncState.running)
+            renderer.render(1.0f, aspect, cameraDist, camAngleX, camAngleY, camPanX, camPanY);
 
 
 
@@ -1125,7 +1291,7 @@ int main()
 
         drawTableWindow(simContext, asyncState.running);
 
-
+        drawWorkingArraysWindow(simContext, previewMesh, meshPreviewReady);
 
         ImGui::Render();
 

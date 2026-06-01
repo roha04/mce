@@ -14,6 +14,9 @@ class MeshRenderer
 public:
     void build(const Mesh& mesh, const GlobalSystem& system, const StressAnalyzer& stressAnalyzer);
 
+    // Попередній перегляд сітки (п.20 vii) без результатів МСЕ.
+    void buildMeshPreview(const Mesh& mesh);
+
     void updateIndices(const Mesh& mesh, bool showSectionX, bool showSectionZ);
 
     void render(float scaleFactor,

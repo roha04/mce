@@ -279,6 +279,63 @@ bool elementCrossesPlaneZ(const Element& element, const Mesh& mesh, const double
 }
 } // namespace
 
+void MeshRenderer::buildMeshPreview(const Mesh& mesh)
+{
+    shutdown();
+
+    const std::vector<Node>& nodes = mesh.getNodes();
+    vertices_.resize(nodes.size());
+    minStress_ = 0.0f;
+    maxStress_ = 1.0f;
+
+    for (std::size_t nodeId = 0; nodeId < nodes.size(); ++nodeId)
+    {
+        SurfaceVertex& vertex = vertices_[nodeId];
+        vertex.baseX = static_cast<float>(nodes[nodeId].x);
+        vertex.baseY = static_cast<float>(nodes[nodeId].y);
+        vertex.baseZ = static_cast<float>(nodes[nodeId].z);
+        vertex.dispX = 0.0f;
+        vertex.dispY = 0.0f;
+        vertex.dispZ = 0.0f;
+        vertex.stress = 0.0f;
+    }
+
+    modelCenterX_ = static_cast<float>(mesh.getLx() * 0.5);
+    modelCenterY_ = static_cast<float>(mesh.getLy() * 0.5);
+    modelCenterZ_ = static_cast<float>(mesh.getLz() * 0.5);
+    modelExtent_ = static_cast<float>(
+        std::sqrt(mesh.getLx() * mesh.getLx() + mesh.getLy() * mesh.getLy() + mesh.getLz() * mesh.getLz()));
+
+    shaderProgram_ = createProgram();
+    locProjection_ = glGetUniformLocation(shaderProgram_, "u_Projection");
+    locView_ = glGetUniformLocation(shaderProgram_, "u_View");
+    locModel_ = glGetUniformLocation(shaderProgram_, "u_Model");
+    locScaleFactor_ = glGetUniformLocation(shaderProgram_, "u_ScaleFactor");
+    locMinStress_ = glGetUniformLocation(shaderProgram_, "u_MinStress");
+    locMaxStress_ = glGetUniformLocation(shaderProgram_, "u_MaxStress");
+    locIsWireframe_ = glGetUniformLocation(shaderProgram_, "u_IsWireframe");
+    glGenVertexArrays(1, &vao_);
+    glGenBuffers(1, &vbo_);
+    glGenBuffers(1, &ebo_);
+
+    glBindVertexArray(vao_);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(vertices_.size() * sizeof(SurfaceVertex)),
+                 vertices_.data(),
+                 GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SurfaceVertex), reinterpret_cast<void*>(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(SurfaceVertex), reinterpret_cast<void*>(3 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(SurfaceVertex), reinterpret_cast<void*>(6 * sizeof(float)));
+
+    glBindVertexArray(0);
+    updateIndices(mesh, false, false);
+}
+
 void MeshRenderer::build(const Mesh& mesh,
                          const GlobalSystem& system,
                          const StressAnalyzer& stressAnalyzer)

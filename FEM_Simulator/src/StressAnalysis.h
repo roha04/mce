@@ -19,10 +19,10 @@ struct NodeStressResult
 {
     StressTensor stress{};
     double principalMax = 0.0;
+    double principalMin = 0.0;
     bool valid = false;
 };
 
-// Обчислення напружень у вузлах (Етап 4, Заняття 12).
 class StressAnalyzer
 {
 public:
@@ -30,6 +30,7 @@ public:
 
     const std::vector<NodeStressResult>& nodeResults() const { return nodeResults_; }
     double maxPrincipalStress() const { return maxPrincipal_; }
+    double minPrincipalStress() const { return minPrincipal_; }
 
 private:
     static StressTensor computeStressAtElementNode(const Node elementNodes[kHex20NodeCount],
@@ -40,6 +41,8 @@ private:
     std::vector<NodeStressResult> nodeResults_;
     std::vector<int> contributionCount_;
     double maxPrincipal_ = 0.0;
+    double minPrincipal_ = 0.0;
 };
 
 double computeMaxPrincipalStress(const StressTensor& stress);
+double computeMinPrincipalStress(const StressTensor& stress);
